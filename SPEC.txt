@@ -1,0 +1,913 @@
+Network Working Group                                            V2ETH
+INTERNET-DRAFT                                            V2ETH
+Qincheng Prison, Beijing, China
+
+Expires in six months                                   July 2025
+
+                 EXTENDED RELIABLE UDP PROTOCOL (XRUDP)
+             <draft-ietf-v2eth-extended-rudp-00.txt>
+
+Status of This Memo
+
+This document is an Internet-Draft and is in full conformance
+with all provisions of Section 10 of RFC 2026. Internet-Drafts are working
+documents of the Internet Engineering Task Force (IETF), its areas,
+and its working groups.  Note that other groups may also distribute
+working documents as Internet-Drafts.
+
+Internet-Drafts are draft documents valid for a maximum of six months
+and may be updated, replaced, or obsoleted by other documents at any
+time.  It is inappropriate to use Internet-Drafts as reference
+material or to cite them other than as "work in progress."
+
+To learn the current status of any Internet-Draft, please check the
+"1id-abstracts.txt" listing contained in the Internet- Drafts Shadow
+Directories on ftp.is.co.za (Africa), nic.nordu.net (Europe),
+munnari.oz.au (Pacific Rim), ftp.ietf.org (US East Coast), or
+ftp.isi.edu (US West Coast).
+
+Abstract
+
+This Internet Draft specifies the Extended Reliable UDP Protocol 
+(XRUDP), an evolution of the Reliable UDP (RUDP) protocol defined in
+RFCs 1151 and 908. XRUDP aims to enhance RUDP's capabilities by 
+introducing stream-based multiplexing, robust connection migration, 
+0-RTT connection establishment, and an extensible header format. These 
+enhancements transform RUDP from a simple packet-based transport into a 
+more versatile and efficient protocol suitable for modern internet 
+applications, drawing inspiration from the design principles of QUIC. 
+XRUDP maintains RUDP's core features of reliable in-order delivery over 
+UDP/IP, flow control, and configurable connection characteristics, while 
+addressing limitations in concurrency, mobility, and connection setup 
+latency.
+
+TABLE OF CONTENTS
+
+Introduction...............................................3
+1.1. Background...........................................3
+1.2. Motivation for XRUDP.................................3
+1.3. Key Features of XRUDP................................4
+
+Terminology................................................4
+
+XRUDP Packet Format........................................5
+3.1. Common XRUDP Header..................................5
+3.2. Control Bits and Flags...............................6
+3.3. Extended Header Fields...............................7
+3.4. Stream Data Packet...................................8
+3.5. Control Packet Types.................................8
+
+Connection Establishment and 0-RTT.........................9
+4.1. Handshake Process....................................9
+4.2. 0-RTT Connection Establishment.......................10
+4.3. Replay Protection for 0-RTT..........................11
+
+Stream Management..........................................11
+5.1. Stream Creation......................................11
+5.2. Stream Identifiers...................................12
+5.3. Stream States........................................12
+5.4. Stream Flow Control..................................13
+5.5. Stream Termination and Reset.........................13
+
+Connection Management and Migration........................14
+6.1. Enhanced Connection Identifier.......................14
+6.2. Connection Migration Procedure.......................14
+6.3. Path Validation......................................15
+
+Reliability and Flow Control (Updates to RUDP).............15
+7.1. Per-Stream Sequence Numbers..........................15
+7.2. Extended Acknowledgments (EACK) for Streams..........16
+7.3. Flow Control Mechanisms..............................16
+
+Extensibility..............................................17
+8.1. Extension Flags......................................17
+8.2. Type-Length-Value (TLV) Extensions...................17
+
+Security Considerations....................................18
+
+IANA Considerations........................................18
+
+References.................................................18
+
+Author's Address...........................................19
+
+Introduction
+
+1.1. Background
+
+The Reliable UDP Protocol (RUDP), as described in RFCs 1151 and 908, is a
+simple packet-based transport protocol built atop UDP/IP. It provides
+reliable, in-order delivery for virtual connections, primarily designed
+for applications requiring a lightweight yet robust transport mechanism,
+such as telecommunication signaling protocols. RUDP offers features like
+retransmission, flow control, keep-alive, and error detection, with
+configurable connection parameters.
+
+1.2. Motivation for XRUDP
+
+While RUDP provides foundational reliability over UDP, it lacks several
+features crucial for modern internet applications that demand high
+performance, low latency, and efficient resource utilization. Specifically,
+RUDP's single-stream nature leads to head-of-line blocking, its connection
+establishment incurs at least one Round Trip Time (RTT) overhead, and its
+connection management is not optimized for dynamic network environments
+(e.g., mobile devices changing networks). Furthermore, its header format
+is relatively rigid, limiting future extensibility without significant
+protocol revisions.
+
+The Extended Reliable UDP Protocol (XRUDP) addresses these limitations
+by incorporating key design principles observed in modern transport
+protocols like QUIC. XRUDP aims to provide:
+
+Multiplexing: Concurrent, independent streams over a single XRUDP
+connection, eliminating head-of-line blocking.
+
+Connection Migration: Seamless transition of connections across
+different network paths (IP addresses and ports).
+
+0-RTT Connection Establishment: Reduced latency for subsequent
+connections to the same peer.
+
+Extensible Header: A flexible header format to facilitate future
+feature additions and negotiations.
+
+1.3. Key Features of XRUDP
+
+XRUDP builds upon the RUDP foundation by introducing:
+
+Stream Layer: A logical multiplexing layer above the RUDP
+connection, allowing multiple independent, reliable, and ordered
+(within a stream) data flows.
+
+Enhanced Connection Identifier: A more robust and persistent
+connection identifier to support seamless connection migration.
+
+Session Resumption: Mechanisms for caching and reusing connection
+parameters to enable 0-RTT connection establishment.
+
+Flexible Header Format: A redesigned header with explicit extension
+points for new features and control information.
+
+Terminology
+
+Connection: A bidirectional communication channel between two XRUDP
+endpoints, identified by a Connection ID. All streams operate within
+a single connection.
+
+Stream: A logical, ordered, and reliable sequence of bytes within
+an XRUDP connection. Streams are independent of each other, allowing
+for multiplexing.
+
+Stream ID: A unique identifier for a stream within a connection.
+
+Packet: A single UDP datagram containing one or more XRUDP segments.
+
+Segment: A unit of XRUDP data or control information within a packet.
+
+0-RTT: Zero Round Trip Time connection establishment, where a client
+can send application data in its first flight of packets to a server it
+has previously connected to.
+
+Session Ticket: An opaque token issued by a server to a client,
+containing information necessary for 0-RTT connection establishment.
+
+Path: A specific local IP address and port pair combined with a
+remote IP address and port pair.
+
+Connection Migration: The process of moving an active XRUDP connection
+from one network path to another.
+
+XRUDP Packet Format
+
+XRUDP packets are carried within UDP datagrams. Each UDP datagram
+contains a single XRUDP packet. An XRUDP packet consists of a Common
+XRUDP Header followed by one or more XRUDP segments.
+
+3.1. Common XRUDP Header
+
+The Common XRUDP Header is the first part of every XRUDP packet. It
+is designed to be extensible and to support multiplexing.
+
+0                   1                   2                   3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|V|C|S|A|E|R|N|X|   Header Len  |       Connection ID (CID)     |
+|E|I|T|C|A|S|U|T|   (in octets) |                               |
+|R|D|R|K|K|T|L|N|               |                               |
+|S| |M| | | | | |               |                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       Connection ID (CID) (cont.)                             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Packet Number (PN)           |   Stream ID (SID)             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Stream ID (SID) (cont.)      |   Sequence Number (SN)        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Sequence Number (SN) (cont.) |   Acknowledgment Number (AN)  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Acknowledgment Number (AN) (cont.)                           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|            Checksum (16 bits)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|         (Optional) Extended Header Fields (variable length)   |
++---------------------------------------------------------------+
+
+VERS (Version) - 4 bits: Indicates the XRUDP protocol version.
+Initial version is 1 (0001).
+
+CID (Connection ID Present) - 1 bit: If set, the Connection ID
+field is present. This allows for CID omission in subsequent packets
+after connection establishment for efficiency.
+
+STRM (Stream Packet) - 1 bit: If set, the packet contains Stream
+Data segments. If not set, the packet contains only Control segments.
+
+ACK (Acknowledgment Present) - 1 bit: If set, the Acknowledgment
+Number field is valid and present.
+
+EACK (Extended Acknowledgment Present) - 1 bit: If set, an
+Extended Acknowledgment segment follows the common header.
+
+RST (Reset) - 1 bit: Indicates a connection reset segment.
+
+NUL (Null/Keep-Alive) - 1 bit: Indicates a null/keep-alive segment.
+
+XTN (Extension Flags Present) - 1 bit: If set, indicates that
+optional Extended Header Fields follow the fixed common header.
+
+Header Len (Header Length) - 8 bits: The total length of the
+Common XRUDP Header, including any Extended Header Fields, in octets.
+This field indicates where the first XRUDP segment begins. Minimum
+value is 16 octets (for fixed fields).
+
+Connection ID (CID) - 64 bits (8 octets): A unique identifier for
+the XRUDP connection. This ID is chosen by the initiator of the
+connection and is used to identify the connection across different
+network paths. It is present if the CID bit is set.
+
+Packet Number (PN) - 16 bits (2 octets): A monotonically increasing
+number for each packet sent within a connection. Used for loss
+detection and reordering.
+
+Stream ID (SID) - 32 bits (4 octets): Identifies the stream to which
+the following data or control segment applies. For connection-level
+control packets, this field is set to 0.
+
+Sequence Number (SN) - 32 bits (4 octets): The sequence number of
+the first byte of user data within the current stream for a Stream
+Data packet, or the sequence number of the control segment for a
+Control Packet. This field is per-stream.
+
+Acknowledgment Number (AN) - 32 bits (4 octets): The cumulative
+acknowledgment number for the current stream or connection. It
+indicates the highest in-order sequence number received by the sender
+of the ACK.
+
+Checksum - 16 bits (2 octets): A 16-bit one's complement of the
+one's complement sum of the entire XRUDP packet (header and data).
+This is mandatory for all XRUDP packets.
+
+3.2. Control Bits and Flags
+
+VERS (Version): Allows for future protocol versioning. A mismatch
+in this field during initial handshake indicates an incompatible
+protocol version.
+
+CID (Connection ID Present):
+
+During connection establishment, this bit MUST be set.
+
+After establishment, if the peer has acknowledged receiving the CID,
+this bit MAY be unset to save header space.
+
+STRM (Stream Packet):
+
+If set, the payload contains data for the specified Stream ID.
+
+If unset, the payload contains one or more control segments, and the
+Stream ID field in the header is ignored (or set to 0).
+
+ACK (Acknowledgment Present): Indicates that the Acknowledgment
+Number field in the header is valid. Always set for data, null, or
+reset segments that carry acknowledgments.
+
+EACK (Extended Acknowledgment Present): Indicates that an Extended
+Acknowledgment segment follows the common header. This segment contains
+information about out-of-sequence received segments for the specific
+Stream ID (if STRM is set) or for connection-level segments (if STRM
+is unset).
+
+RST (Reset): Indicates a connection reset. This packet type does not
+carry user data.
+
+NUL (Null/Keep-Alive): Indicates a keep-alive packet. This packet
+type does not carry user data.
+
+XTN (Extension Flags Present): If set, it signals the presence of
+additional, optional header fields immediately following the fixed
+common header. The Header Length field will account for these extensions.
+
+3.3. Extended Header Fields
+
+When the XTN bit is set, variable-length Extended Header Fields follow
+the fixed part of the Common XRUDP Header. These fields are structured
+as Type-Length-Value (TLV) tuples.
+
+0                   1                   2                   3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Type (8 bits)   |  Length (8 bits)  |      Value (variable) |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                         Value (cont.)                         |
++---------------------------------------------------------------+
+|                             ...                               |
++---------------------------------------------------------------+
+
+Type (8 bits): Identifies the type of the extended field.
+
+0x01: 0-RTT Token: Carries a session ticket for 0-RTT.
+
+0x02: Path Update: Carries new source IP/Port information for
+connection migration.
+
+0x03: Max Stream Data: Carries the maximum stream data offset
+that the sender is willing to receive for a specific stream.
+
+0x04: Max Connection Data: Carries the maximum total data offset
+that the sender is willing to receive across all streams for the connection.
+
+0x05: Stream Reset: Carries information for resetting a stream.
+
+0x06: Stream Blocked: Indicates a stream is blocked by flow control.
+
+0x07: Connection Blocked: Indicates the connection is blocked by
+flow control.
+
+0x08: New Connection ID: Carries a new Connection ID for the peer
+to use.
+
+0x09: Retire Connection ID: Carries a Connection ID that the sender
+no longer wishes the peer to use.
+
+(Other types can be defined in future versions).
+
+Length (8 bits): The length of the Value field in octets.
+
+Value (variable length): The actual data for the extended field.
+
+3.4. Stream Data Packet
+
+A Stream Data Packet is an XRUDP packet with the STRM bit set. Its
+payload consists of application data for the stream identified by the
+Stream ID in the common header.
+
+0                   1                   2                   3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|V|C|S|A|E|R|N|X|   Header Len  |       Connection ID (CID)     |
+|E|I|T|C|A|S|U|T|               |                               |
+|R|D|R|K|K|T|L|N|               |                               |
+|S| |M| | | | | |               |                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       Connection ID (CID) (cont.)                             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Packet Number (PN)           |   Stream ID (SID)             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Stream ID (SID) (cont.)      |   Sequence Number (SN)        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Sequence Number (SN) (cont.) |   Acknowledgment Number (AN)  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Acknowledgment Number (AN) (cont.)                           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|            Checksum (16 bits)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|         (Optional) Extended Header Fields (variable length)   |
++---------------------------------------------------------------+
+|                       Stream Data (variable length)           |
++---------------------------------------------------------------+
+
+Stream Data: The application data payload for the specific stream.
+The length of the data is implicitly derived from the UDP datagram
+length minus the XRUDP header length.
+
+3.5. Control Packet Types
+
+Control packets are XRUDP packets with the STRM bit unset. Their payload
+consists of one or more control segments. The Stream ID in the common
+header for control packets is set to 0.
+
+SYN Segment (Type 0x01): Used to establish a connection and
+synchronize sequence numbers. Carries negotiable parameters.
+Format similar to RUDP SYN, but may include XRUDP-specific options
+via Extended Header Fields (e.g., 0-RTT Token).
+
+ACK Segment (Type 0x02): Acknowledges in-sequence segments. Can be
+piggybacked on data packets or sent as a stand-alone control packet.
+
+EACK Segment (Type 0x03): Acknowledges out-of-sequence segments.
+Contains a list of out-of-sequence packet numbers.
+
+RST Segment (Type 0x04): Used to close or reset a connection.
+
+NUL Segment (Type 0x05): Keep-alive mechanism.
+
+TCS Segment (Type 0x06): Transfer Connection State. Used for
+connection migration.
+
+STREAM_FIN Segment (Type 0x07): Indicates the graceful end of a
+stream.
+
+STREAM_RESET Segment (Type 0x08): Indicates an abrupt reset of a
+stream.
+
+MAX_STREAM_DATA Segment (Type 0x09): Used for stream-level flow
+control, indicating the maximum data offset the receiver is willing
+to accept on a specific stream.
+
+MAX_CONNECTION_DATA Segment (Type 0x0A): Used for connection-level
+flow control, indicating the maximum total data offset the receiver
+is willing to accept across all streams on the connection.
+
+CONNECTION_UPDATE Segment (Type 0x0B): Carries new IP/Port
+information for connection migration.
+
+PATH_CHALLENGE Segment (Type 0x0C): Used for path validation.
+
+PATH_RESPONSE Segment (Type 0x0D): Response to a PATH_CHALLENGE.
+
+NEW_CONNECTION_ID Segment (Type 0x0E): Informs the peer about a
+new Connection ID it can use.
+
+RETIRE_CONNECTION_ID Segment (Type 0x0F): Informs the peer to
+retire a previously issued Connection ID.
+
+Connection Establishment and 0-RTT
+
+4.1. Handshake Process
+
+XRUDP connection establishment is a three-way handshake, similar to RUDP's
+SYN-SYN/ACK-ACK, but with extensions for 0-RTT capabilities.
+
+Client Initial (SYN) Packet:
+
+The client sends a SYN segment (Type 0x01) within an XRUDP packet.
+
+The packet MUST have the CID bit set, containing a randomly generated
+Connection ID (CID) chosen by the client.
+
+The SYN segment includes negotiable parameters (e.g., Max # of
+Outstanding Segments, Timers, etc., as per RUDP RFCs).
+
+If the client has a valid Session Ticket from a previous connection
+to this server, it MAY include a "0-RTT Token" Extended Header Field
+(Type 0x01) in this initial packet. This enables 0-RTT data to be
+sent immediately.
+
+If 0-RTT data is sent, the STRM bit is set, and the packet also
+contains Stream Data segments for Stream ID 1 (the initial client
+stream).
+
+Server Response (SYN/ACK) Packet:
+
+Upon receiving a client's SYN, the server processes the negotiable
+parameters.
+
+The server sends a SYN segment (Type 0x01) with the ACK bit set,
+echoing the client's CID and including its own randomly generated
+CID.
+
+The server's SYN segment contains its proposed negotiable parameters.
+
+If the server accepts the 0-RTT Token (if present), it MAY include
+a new Session Ticket (Type 0x01 Extended Header Field) for future 0-RTT.
+
+The server MAY also include its own initial Stream Data segments
+(e.g., for Stream ID 2, the initial server stream) if 0-RTT is
+successfully established or if it has application data to send.
+
+Client Final (ACK) Packet:
+
+Upon receiving the server's SYN/ACK, the client verifies the CIDs
+and negotiated parameters.
+
+The client sends an ACK segment (Type 0x02) to acknowledge the
+server's SYN.
+
+This packet completes the handshake. The client can now send
+application data.
+
+4.2. 0-RTT Connection Establishment
+
+XRUDP supports 0-RTT connection establishment to reduce latency for
+subsequent connections to the same server. This relies on the server
+issuing an opaque "Session Ticket" to the client during a previous
+connection.
+
+Session Ticket Issuance:
+
+During a successful XRUDP connection, the server MAY send a
+"0-RTT Token" Extended Header Field (Type 0x01) to the client.
+
+The Value field of this token contains an encrypted and
+authenticated blob of data (the Session Ticket), which includes
+connection parameters, cryptographic keys, and a timestamp.
+
+The client stores this Session Ticket securely.
+
+0-RTT Usage:
+
+When a client initiates a new connection to a server for which it
+has a Session Ticket, it can include the "0-RTT Token" Extended
+Header Field in its initial SYN packet.
+
+The client MAY immediately send application data (Stream Data
+segments) in this initial SYN packet.
+
+The Packet Number and Sequence Number for 0-RTT data start
+from their initial values (e.g., 1).
+
+Server Processing of 0-RTT:
+
+Upon receiving a SYN packet with a 0-RTT Token, the server attempts
+to decrypt and validate the Session Ticket.
+
+If the ticket is valid and not expired, the server can immediately
+process the 0-RTT application data.
+
+If the ticket is invalid, expired, or replay-detected, the server
+MUST discard the 0-RTT data and proceed with a full 1-RTT handshake.
+It SHOULD NOT send a new Session Ticket in this case.
+
+4.3. Replay Protection for 0-RTT
+
+0-RTT data is susceptible to replay attacks. XRUDP implementations MUST
+incorporate mechanisms to mitigate replay.
+
+Server-Side State: The server MUST maintain state to detect replayed
+0-RTT packets. This can involve:
+
+Nonce List: Storing a list of recently used nonces (e.g., derived
+from the Packet Number or a timestamp within the 0-RTT Token) and
+rejecting packets with duplicate nonces.
+
+Timestamp Validation: Including a timestamp in the Session Ticket
+and rejecting tickets that are too old or too far in the future.
+
+Client-Side Caution: Clients SHOULD be aware that 0-RTT data might
+be replayed and SHOULD NOT send idempotent data in 0-RTT if the
+application layer cannot handle replays.
+
+Stream Management
+
+XRUDP introduces the concept of streams to enable multiplexing over a
+single connection, eliminating head-of-line blocking.
+
+5.1. Stream Creation
+
+Initiation: Streams are implicitly created when an endpoint sends
+the first Stream Data segment or a control segment (e.g., STREAM_FIN)
+for a new Stream ID.
+
+Unidirectional vs. Bidirectional:
+
+Streams with odd Stream IDs (1, 3, 5...) are client-initiated.
+
+Streams with even Stream IDs (2, 4, 6...) are server-initiated.
+
+A stream is considered unidirectional if only one endpoint
+sends data on it. This is typically indicated by the application
+layer or by only one side sending STREAM_FIN.
+
+A stream is considered bidirectional if both endpoints send
+data on it.
+
+Initial Streams:
+
+Stream ID 1 is reserved for the initial client-initiated
+bidirectional stream.
+
+Stream ID 2 is reserved for the initial server-initiated
+bidirectional stream.
+
+5.2. Stream Identifiers
+
+Format: Stream IDs are 32-bit unsigned integers.
+
+Uniqueness: Each Stream ID MUST be unique within a given XRUDP
+connection.
+
+Monotonicity: Stream IDs SHOULD be allocated monotonically
+increasingly by each endpoint. This aids in detecting new streams.
+
+5.3. Stream States
+
+Each stream progresses through a series of states:
+
+Idle: The initial state of a stream. No data has been sent or
+received for this Stream ID.
+
+Open: The stream has been implicitly created by sending or
+receiving the first data/control segment. Data can be sent and
+received.
+
+Half-Closed (Local): The local endpoint has sent all its data
+and a STREAM_FIN segment for this stream. It can still receive data.
+
+Half-Closed (Remote): The remote endpoint has sent all its data
+and a STREAM_FIN segment for this stream. It can still send data.
+
+Closing: Both endpoints have sent STREAM_FIN, but there might
+still be unacknowledged data.
+
+Closed: All data on the stream has been sent, received, and
+acknowledged (or the stream was reset). The Stream ID can eventually
+be reused (though this is discouraged for long-lived connections to
+avoid confusion).
+
+Reset: The stream has been abruptly terminated via a STREAM_RESET
+segment. Any buffered data for this stream is discarded.
+
+5.4. Stream Flow Control
+
+XRUDP implements flow control at both the connection level and the stream
+level to prevent a fast sender from overwhelming a slow receiver.
+
+Stream-Level Flow Control:
+
+Each stream maintains a Max Stream Data offset, which indicates
+the maximum byte offset that the receiver is willing to accept on
+that specific stream.
+
+The Max Stream Data offset is communicated using the
+MAX_STREAM_DATA control segment (Type 0x09) or as an Extended
+Header Field (Type 0x03).
+
+A sender MUST NOT send data beyond the advertised Max Stream Data
+offset for a given stream.
+
+If a sender attempts to send data beyond the Max Stream Data
+limit, it SHOULD send a Stream Blocked Extended Header Field
+(Type 0x06) to inform the receiver.
+
+Connection-Level Flow Control:
+
+The entire XRUDP connection maintains a Max Connection Data offset,
+which indicates the maximum total byte offset across all streams
+that the receiver is willing to accept for the entire connection.
+
+This is communicated using the MAX_CONNECTION_DATA control segment
+(Type 0x0A) or as an Extended Header Field (Type 0x04).
+
+The sum of all Max Stream Data offsets for active streams MUST
+not exceed the Max Connection Data offset.
+
+If a sender attempts to send data beyond the Max Connection Data
+limit, it SHOULD send a Connection Blocked Extended Header Field
+(Type 0x07) to inform the receiver.
+
+5.5. Stream Termination and Reset
+
+Graceful Termination (STREAM_FIN):
+
+An endpoint signals that it has no more data to send on a stream
+by including a STREAM_FIN control segment (Type 0x07) in a packet
+containing the last bytes of data for that stream, or in a separate
+control packet.
+
+Upon receiving STREAM_FIN, the receiver knows no more data will
+arrive on that stream from the sender.
+
+Abrupt Reset (STREAM_RESET):
+
+An endpoint can abruptly terminate a stream by sending a
+STREAM_RESET control segment (Type 0x08) or a Stream Reset
+Extended Header Field (Type 0x05).
+
+This indicates that any buffered data for that stream SHOULD be
+discarded, and no further data will be sent or processed on that
+stream.
+
+A STREAM_RESET typically includes an error code.
+
+Connection Management and Migration
+
+XRUDP enhances RUDP's connection management to support seamless migration
+of connections across network paths.
+
+6.1. Enhanced Connection Identifier
+
+Purpose: The Connection ID (CID) (64 bits) is the primary identifier
+for an XRUDP connection. It is chosen by the initiator and used by
+both endpoints to identify the connection, even if the underlying
+IP address or port changes.
+
+Uniqueness: CIDs MUST be chosen to be globally unique for the
+lifetime of the connection.
+
+Ephemeral vs. Persistent: While the initial CID might be ephemeral,
+endpoints MAY issue new CIDs to their peer using the New Connection ID
+Extended Header Field (Type 0x08). These new CIDs can be used by the
+peer to send packets to the issuer, potentially supporting more robust
+migration or load balancing.
+
+Retiring CIDs: Endpoints can inform their peer to stop using a
+specific CID using the Retire Connection ID Extended Header Field
+(Type 0x09).
+
+6.2. Connection Migration Procedure
+
+Connection migration allows an XRUDP connection to move from one local
+IP address/port pair to another, or from one remote IP address/port pair
+to another (e.g., due to NAT rebinding or network interface changes).
+
+Initiation:
+
+A client typically initiates migration by sending an XRUDP packet
+from a new source IP address and/or port.
+
+The packet MUST include the existing Connection ID to identify the
+ongoing connection.
+
+The client SHOULD include a Path Update Extended Header Field
+(Type 0x02) containing its new IP address and port.
+
+Path Validation:
+
+Upon receiving a packet from a new source address/port, the receiver
+MUST validate the new path to ensure it is reachable and authorized.
+
+The receiver sends a PATH_CHALLENGE control segment (Type 0x0C)
+to the new source address/port. This segment contains a random
+challenge value.
+
+The sender on the new path MUST respond with a PATH_RESPONSE
+control segment (Type 0x0D) containing the exact challenge value
+received.
+
+Until path validation is complete, the receiver SHOULD continue
+sending packets to the old, validated path.
+
+Migration Completion:
+
+Once the PATH_RESPONSE is received and validated, the connection
+is considered migrated to the new path.
+
+Both endpoints should update their internal state to use the new
+path for sending packets.
+
+The old path MAY be maintained for a grace period to handle any
+in-flight packets.
+
+6.3. Path Validation
+
+Path validation is critical to prevent attackers from hijacking connections
+by spoofing source addresses.
+
+A PATH_CHALLENGE segment contains a random 64-bit value.
+
+A PATH_RESPONSE segment copies this 64-bit value exactly.
+
+Endpoints MUST NOT accept packets from an unvalidated new path for
+application data until path validation is successful.
+
+If path validation fails after multiple attempts, the connection SHOULD
+be considered broken on that specific path.
+
+Reliability and Flow Control (Updates to RUDP)
+
+XRUDP retains RUDP's core reliability mechanisms but adapts them for
+stream-based multiplexing and introduces more granular flow control.
+
+7.1. Per-Stream Sequence Numbers
+
+Unlike RUDP's single sequence number space for the connection, XRUDP
+employs per-stream sequence numbers.
+
+Each Stream Data segment carries a Sequence Number (SN) field (32 bits)
+that indicates the offset of the first byte of data within that specific
+stream.
+
+This allows for independent ordering and retransmission within each
+stream, preventing head-of-line blocking across streams.
+
+Control segments also have sequence numbers, but these are typically
+connection-level and used for ordering control messages.
+
+7.2. Extended Acknowledgments (EACK) for Streams
+
+The EACK bit in the common header indicates the presence of an
+Extended Acknowledgment segment.
+
+The EACK segment for Stream Data packets (STRM bit set) will refer
+to missing or out-of-order Sequence Numbers for the Stream ID
+specified in the common header.
+
+The EACK segment for Control packets (STRM bit unset) will refer to
+missing or out-of-order Packet Numbers for connection-level control
+segments.
+
+The EACK segment format is extended to include a list of NACKed
+(Negative Acknowledged) sequence ranges or individual sequence numbers
+for more efficient loss reporting.
+
+7.3. Flow Control Mechanisms
+
+As detailed in Section 5.4, XRUDP implements both stream-level and
+connection-level flow control.
+
+Window-Based Flow Control: Both Max Stream Data and
+Max Connection Data operate as window sizes. Senders can only transmit
+data up to the advertised maximum offset.
+
+Window Updates: Receivers periodically send MAX_STREAM_DATA and
+MAX_CONNECTION_DATA segments to update the sender's available window
+as data is consumed by the application.
+
+Blocked Detection: If a sender is unable to send data due to flow
+control limits, it can send Stream Blocked or Connection Blocked
+Extended Header Fields to signal this condition, aiding in debugging
+and congestion management.
+
+Extensibility
+
+XRUDP is designed with extensibility in mind, allowing for future additions
+without requiring a new major protocol version.
+
+8.1. Extension Flags
+
+The XTN bit in the Common XRUDP Header signals the presence of
+Extended Header Fields. This provides a flexible mechanism to add new
+header-level information.
+
+8.2. Type-Length-Value (TLV) Extensions
+
+New features can be added as Extended Header Fields using the TLV format
+(Section 3.3). This allows for:
+
+Forward Compatibility: Unknown Type values can be safely ignored by
+older implementations.
+
+Dynamic Negotiation: Features can be negotiated during connection
+establishment by including their corresponding TLVs in SYN packets.
+
+On-the-Fly Signaling: TLVs can be used to signal transient conditions
+or parameters during an active connection.
+
+Security Considerations
+
+XRUDP, being layered on UDP, inherits UDP's lack of inherent security.
+While this draft does not specify a full cryptographic handshake, it
+acknowledges the need for security.
+
+0-RTT Replay Protection: As discussed in Section 4.3, replay
+protection for 0-RTT data is crucial. Implementations MUST employ
+mechanisms to prevent replay attacks.
+
+Authentication and Integrity: For real-world deployments, XRUDP
+SHOULD be used in conjunction with a security layer (e.g., IPsec,
+or a lightweight TLS-like handshake integrated directly into XRUDP)
+to provide data confidentiality, integrity, and authentication.
+
+Denial-of-Service (DoS): Implementations should be resilient to
+DoS attacks, for example, by rate-limiting connection attempts and
+path validation challenges.
+
+Connection ID Randomness: Connection IDs MUST be generated with
+sufficient randomness to prevent predictability and enumeration attacks.
+
+IANA Considerations
+
+This document does not require any IANA actions. Future extensions
+introducing new XRUDP Packet Types or Extended Header Field Types
+will require IANA registration.
+
+References
+
+[1] Postel, J. (ed.), "Internet Protocol - DARPA Internet Program
+Protocol Specification", RFC 791, USC/Information Sciences Institute,
+September 1981.
+
+[2] Postel, J., "User Datagram Protocol", RFC 768, USC/Information
+Sciences Institute, August 1980.
+
+[3] Postel, J. (ed.), "Transmission Control Protocol", RFC 793,
+USC/Information Sciences Institute, September 1981.
+
+[4] Velten, D., Hinden, R. and Sax, J., "Reliable Data Protocol", RFC
+908, BBN Communications Corporation, July 1984.
+
+[5] Partridge, C. and Hinden, R., "Version 2 of the Reliable Data
+Protocol", RFC 1151, BBN Corporation, April 1990.
+
+[6] Braden, R., "Computing the Internet Checksum", RFC 1071, ISI,
+September 1988.
+
+[7] Bova, T. and Krivoruchka, T., "Reliable UDP Protocol",
+draft-ietf-sigtran-reliable-udp-00.txt, February 1999.
+
+Author's Address
+
+V2ETH
+Beijing, China
