@@ -1,3 +1,3 @@
-module github.com/XRUDP/go-XRUDP
+module github.com/gQUIC/go-XRUDP
 
 go 1.20
